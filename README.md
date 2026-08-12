@@ -1,58 +1,52 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Persona KYC Sandbox Integration — Demo
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+A minimal Laravel integration with Persona's Inquiry API, built to have
+something real and working for the interview — not just talking points.
 
-## About Laravel
+## What this demonstrates
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+- **Outbound API call with retries + idempotency** (`PersonaService::createInquiry`)
+  — same pattern as any payment gateway or third-party API integration:
+  call out, retry transient failures, never double-create on retry.
+- **Inbound webhook handling** (`PersonaWebhookController`)
+  — signature verification (HMAC-SHA256, constant-time compare), duplicate-event
+  protection (Persona explicitly documents at-least-once delivery), and
+  routing pass/fail/needs-review outcomes back onto the claim record.
+- **PII discipline** — only the Persona `reference-id` and inquiry status are
+  stored locally; raw ID documents/selfies never touch our servers, they stay
+  in Persona. Webhook payloads are logged for audit but this table would be
+  access-restricted and encrypted at rest in production.
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+## Setup (do this before Thursday)
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+1. Sign up for a free sandbox account at https://withpersona.com
+2. In the Dashboard, create an Inquiry Template with Government ID + Selfie
+   verification enabled. Copy the Template ID.
+3. Under Webhooks, create a webhook pointing at your local tunnel
+   (e.g. `ngrok http 8000` → `https://xxxx.ngrok.io/webhooks/persona`).
+   Copy the signing secret shown once at creation.
+4. Copy `.env.example` values into your `.env`:
+   ```
+   PERSONA_API_KEY=sandbox_xxx
+   PERSONA_TEMPLATE_ID=itmpl_xxx
+   PERSONA_WEBHOOK_SECRET=whsec_xxx
+   ```
+5. `php artisan migrate`
+6. Exempt `/webhooks/persona` from CSRF in `bootstrap/app.php`:
+   ```php
+   ->withMiddleware(function (Middleware $middleware) {
+       $middleware->validateCsrfTokens(except: ['webhooks/persona']);
+   })
+   ```
+7. Trigger a test inquiry, complete it in the hosted flow with Persona's
+   test documents, and confirm the webhook lands and updates a claim record.
 
-## Learning Laravel
+## Talking through it live
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+Walk the interviewer through: `POST /claims/{id}/start-verification` →
+`PersonaService` calls the Inquiries API with an idempotency key → claimant
+completes the hosted flow → Persona POSTs to `/webhooks/persona` →
+signature verified → event logged (idempotent) → claim status updated.
 
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
-
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
-
-## Agentic Development
-
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
-
-```bash
-composer require laravel/boost --dev
-
-php artisan boost:install
-```
-
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
-
-## Contributing
-
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
-
-## Code of Conduct
-
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
-
-## Security Vulnerabilities
-
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
-
-## License
-
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+That end-to-end loop, built and running, is worth more than any rehearsed
+answer about "experience with Persona."

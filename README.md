@@ -17,6 +17,27 @@ something real and working for the interview — not just talking points.
   in Persona. Webhook payloads are logged for audit but this table would be
   access-restricted and encrypted at rest in production.
 
+## Current status (last verified 2026-08-13)
+
+- **Outbound inquiry creation — working end-to-end.** Tested against the live
+  Persona sandbox (not mocked): `POST /claims/{id}/start-verification` creates
+  a real Inquiry and stores its `inq_...` ID on the claim.
+- **Webhook receipt, signature verification, idempotency — working end-to-end.**
+  Confirmed via real sandbox deliveries: `inquiry.created` → `inquiry.started` →
+  `inquiry.approved` all arrived, HMAC signatures verified, and each event was
+  logged exactly once in `webhook_events` (7 events logged, no duplicate
+  processing observed even on redelivery).
+- **Known bug — claim status is never actually updated.** `verification_status`
+  stays `pending` even after a confirmed `inquiry.approved` webhook.
+  `PersonaWebhookController::applyToClaimRecord()` looks for the inquiry ID at
+  `data.relationships.inquiry.data.id` (falling back to `data.id`, which is
+  the *event* ID), but Persona actually nests it at
+  `data.attributes.payload.data.id`. `Claim::where('persona_inquiry_id', ...)`
+  never matches, so the claim lookup silently misses and only
+  `Log::warning('Received Persona webhook for unknown inquiry', ...)` fires.
+  **Fix this path before demoing the "updates a claim record" step live** —
+  everything up to that point is real and working, this is the one gap.
+
 ## Setup (do this before Thursday)
 
 1. Sign up for a free sandbox account at https://withpersona.com

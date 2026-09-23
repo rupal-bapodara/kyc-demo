@@ -1,7 +1,49 @@
 # Persona KYC Sandbox Integration — Demo
 
-A minimal Laravel integration with Persona's Inquiry API, built to have
-something real and working for the interview — not just talking points.
+A Laravel backend integration with [Persona](https://withpersona.com)'s
+Identity Verification (Inquiry) API — built as a working demo of KYC/identity
+verification integration patterns: outbound API calls with retry/idempotency,
+inbound webhook handling with signature verification, and safe PII handling.
+
+## Tech stack
+
+- **PHP / Laravel** (Eloquent, HTTP client, migrations)
+- **Persona API** — hosted Inquiry flow for government ID + selfie verification
+- **SQLite** (demo) — `claims` and `webhook_events` tables
+- **ngrok** — local tunnel for receiving webhooks in dev
+
+## How the demo works
+
+The flow is a standard outbound-call / hosted-flow / webhook-callback loop,
+the same shape used to integrate any third-party verification or payment
+provider:
+
+1. **`POST /claims/{id}/start-verification`** — our backend calls Persona's
+   `POST /inquiries` API (`PersonaService::createInquiry`) with an
+   `Idempotency-Key` header, so a network retry can never create a duplicate
+   Inquiry. The response's Inquiry ID (`inq_...`) is saved on the `claims`
+   row via `persona_inquiry_id`.
+2. **Claimant completes verification** in Persona's hosted flow (a webpage
+   Persona serves — we never see or store the raw ID photo or selfie).
+3. **Persona POSTs webhook events** to `/webhooks/persona` as the Inquiry
+   progresses: `inquiry.created` → `inquiry.started` → `inquiry.approved`
+   (or `.declined` / `.failed`).
+4. **`PersonaWebhookController::handle`** verifies the `Persona-Signature`
+   header (HMAC-SHA256 over `{timestamp}.{rawBody}`, constant-time compare),
+   then checks the event ID against the `webhook_events` table — Persona
+   documents at-least-once delivery, so duplicates are detected and skipped
+   rather than reprocessed.
+5. **`applyToClaimRecord`** looks up the `claims` row by `persona_inquiry_id`
+   and flips `verification_status` to `verified` / `needs_resubmission` /
+   `failed` based on the event type. *(See "Current status" below — this
+   last step currently has a bug.)*
+
+### Endpoints
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/claims/{claim}/start-verification` | Creates a Persona Inquiry for a claim and stores the Inquiry ID |
+| `POST` | `/webhooks/persona` | Receives Persona's verification-result callbacks (CSRF-exempt, signature-verified) |
 
 ## What this demonstrates
 
@@ -35,10 +77,10 @@ something real and working for the interview — not just talking points.
   `data.attributes.payload.data.id`. `Claim::where('persona_inquiry_id', ...)`
   never matches, so the claim lookup silently misses and only
   `Log::warning('Received Persona webhook for unknown inquiry', ...)` fires.
-  **Fix this path before demoing the "updates a claim record" step live** —
-  everything up to that point is real and working, this is the one gap.
+  Fix: read the inquiry ID from `data.attributes.payload.data.id` in
+  `applyToClaimRecord()`.
 
-## Setup (do this before Thursday)
+## Setup
 
 1. Sign up for a free sandbox account at https://withpersona.com
 2. In the Dashboard, create an Inquiry Template with Government ID + Selfie
@@ -60,14 +102,5 @@ something real and working for the interview — not just talking points.
    })
    ```
 7. Trigger a test inquiry, complete it in the hosted flow with Persona's
-   test documents, and confirm the webhook lands and updates a claim record.
-
-## Talking through it live
-
-Walk the interviewer through: `POST /claims/{id}/start-verification` →
-`PersonaService` calls the Inquiries API with an idempotency key → claimant
-completes the hosted flow → Persona POSTs to `/webhooks/persona` →
-signature verified → event logged (idempotent) → claim status updated.
-
-That end-to-end loop, built and running, is worth more than any rehearsed
-answer about "experience with Persona."
+   test documents, and confirm the webhook lands (see "Current status" for
+   the claim-update caveat).

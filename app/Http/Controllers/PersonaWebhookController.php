@@ -83,9 +83,7 @@ class PersonaWebhookController extends Controller
      */
     protected function applyToClaimRecord(array $payload, ?string $eventType): void
     {
-        $inquiryId = $payload['data']['relationships']['inquiry']['data']['id']
-            ?? $payload['data']['id']
-            ?? null;
+        $inquiryId = $payload['data']['attributes']['payload']['data']['id'] ?? null;
 
         $claim = Claim::where('persona_inquiry_id', $inquiryId)->first();
 
